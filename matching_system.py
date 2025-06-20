@@ -4,9 +4,6 @@ try:
     import spacy
 except ImportError:
     spacy = None
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.preprocessing import MinMaxScaler
 import re
 import json
 from geopy.distance import geodesic
@@ -21,28 +18,40 @@ warnings.filterwarnings('ignore')
 class FreeCandidateMatchingSystem:
     def __init__(self, google_credentials_path: str):
         """
-        Initialize the matching system with free alternatives
+        Initialize the matching system with lightweight alternatives
         
         Args:
             google_credentials_path: Path to Google service account credentials JSON
         """
-        # Load free NLP models
-        self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')  # Free sentence embeddings
-        
-        # Load spaCy model for NLP (download with: python -m spacy download en_core_web_sm)
-        try:
-            self.nlp = spacy.load("en_core_web_sm")
-        except OSError:
-            print("Please install spaCy English model: python -m spacy download en_core_web_sm")
+        # Load spaCy model for NLP (optional)
+        if spacy:
+            try:
+                self.nlp = spacy.load("en_core_web_sm")
+            except OSError:
+                print("spaCy English model not available, using fallback method")
+                self.nlp = None
+        else:
             self.nlp = None
             
-        self.scaler = MinMaxScaler()
         self.geolocator = Nominatim(user_agent="candidate_matcher")
         
         # Initialize Google Sheets connection
         scope = ['https://spreadsheets.google.com/feeds',
                 'https://www.googleapis.com/auth/drive']
-        creds = Credentials.from_service_account_file(google_credentials_path, scopes=scope)
+        
+        # Handle both file path and JSON string
+        if google_credentials_path and os.path.exists(google_credentials_path):
+            creds = Credentials.from_service_account_file(google_credentials_path, scopes=scope)
+        else:
+            # Try to get from environment variable (for production)
+            import json as json_lib
+            creds_json = os.getenv('GOOGLE_CREDENTIALS_JSON')
+            if creds_json:
+                creds_data = json_lib.loads(creds_json)
+                creds = Credentials.from_service_account_info(creds_data, scopes=scope)
+            else:
+                raise ValueError("Google credentials not found")
+        
         self.gc = gspread.authorize(creds)
         
         # Pre-defined skill keywords for extraction
@@ -91,7 +100,7 @@ class FreeCandidateMatchingSystem:
     
     def extract_years_of_experience(self, text: str) -> Dict[str, int]:
         """
-        Extract years of experience using regex patterns (FREE alternative to OpenAI)
+        Extract years of experience using regex patterns
         
         Args:
             text: Input text to analyze
@@ -129,7 +138,7 @@ class FreeCandidateMatchingSystem:
     
     def extract_skills_with_spacy(self, text: str) -> Dict:
         """
-        Extract structured information using spaCy (FREE alternative to OpenAI)
+        Extract structured information using spaCy or fallback method
         
         Args:
             text: Input text to analyze
@@ -137,9 +146,15 @@ class FreeCandidateMatchingSystem:
         Returns:
             Dictionary with extracted skills, years, companies, positions
         """
-        if not self.nlp:
+        if self.nlp:
+            return self._extract_with_spacy(text)
+        else:
             return self.extract_skills_basic(text)
-            
+    
+    def _extract_with_spacy(self, text: str) -> Dict:
+        """
+        Extract using spaCy (when available)
+        """
         doc = self.nlp(text)
         
         # Extract skills years
@@ -224,7 +239,7 @@ class FreeCandidateMatchingSystem:
     
     def get_coordinates(self, location: str) -> Tuple[float, float]:
         """
-        Get latitude and longitude for a location (FREE using Nominatim)
+        Get latitude and longitude for a location
         """
         try:
             location_obj = self.geolocator.geocode(location)
@@ -238,7 +253,7 @@ class FreeCandidateMatchingSystem:
     
     def calculate_distance(self, loc1: str, loc2: str) -> float:
         """
-        Calculate distance between two locations in miles (FREE)
+        Calculate distance between two locations in miles
         """
         coords1 = self.get_coordinates(loc1)
         coords2 = self.get_coordinates(loc2)
@@ -278,23 +293,32 @@ class FreeCandidateMatchingSystem:
         
         return max_score
     
-    def create_candidate_vector(self, candidate: Dict, companies_df: pd.DataFrame) -> np.ndarray:
+    def calculate_text_similarity(self, text1: str, text2: str) -> float:
         """
-        Create vector representation for a candidate using FREE tools
+        Calculate simple text similarity using word overlap
         """
-        # Extract skills information using spaCy/regex
-        skills_info = self.extract_skills_with_spacy(candidate['profile_details'])
+        # Convert to lowercase and split into words
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
         
-        # Create embeddings for text fields (FREE with sentence-transformers)
-        profile_embedding = self.sentence_model.encode(candidate['profile_details'])
-        location_embedding = self.sentence_model.encode(candidate['location'])
-        benefits_embedding = self.sentence_model.encode(candidate['benefits_requirements'])
-        culture_embedding = self.sentence_model.encode(candidate['corporate_culture'])
+        # Calculate Jaccard similarity
+        intersection = len(words1.intersection(words2))
+        union = len(words1.union(words2))
+        
+        return intersection / union if union > 0 else 0
+    
+    def create_candidate_features(self, candidate: Dict, companies_df: pd.DataFrame) -> Dict:
+        """
+        Create feature representation for a candidate
+        """
+        # Extract skills information
+        skills_info = self.extract_skills_with_spacy(candidate['profile_details'])
         
         # Calculate aggregate metrics
         avg_years_experience = 0
         max_company_ranking = 1
         position_score = 1.0
+        skill_count = len(skills_info['skills'])
         
         if skills_info['skills']:
             years_list = [s['years'] for s in skills_info['skills'] if s['years'] is not None]
@@ -311,30 +335,29 @@ class FreeCandidateMatchingSystem:
             positions = [s['position'] for s in skills_info['skills'] if s['position']]
             position_score = self.calculate_position_score(positions)
         
-        # Combine all features
-        feature_vector = np.concatenate([
-            profile_embedding,
-            location_embedding,
-            benefits_embedding,
-            culture_embedding,
-            [avg_years_experience, max_company_ranking, position_score]
-        ])
-        
-        return feature_vector
+        return {
+            'profile_text': candidate['profile_details'],
+            'location': candidate['location'],
+            'benefits_requirements': candidate['benefits_requirements'],
+            'corporate_culture': candidate['corporate_culture'],
+            'avg_years_experience': avg_years_experience,
+            'max_company_ranking': max_company_ranking,
+            'position_score': position_score,
+            'skill_count': skill_count,
+            'skills': skills_info['skills']
+        }
     
-    def create_job_vector(self, job: Dict) -> np.ndarray:
+    def create_job_features(self, job: Dict) -> Dict:
         """
-        Create vector representation for a job using FREE tools
+        Create feature representation for a job
         """
-        # Create embeddings for job requirements
-        job_embedding = self.sentence_model.encode(job['job_requirements'])
-        
-        # Extract requirements using free methods
+        # Extract requirements
         requirements_info = self.extract_skills_with_spacy(job['job_requirements'])
         
         # Calculate required metrics
         required_years = 0
         required_seniority = 1.0
+        required_skill_count = len(requirements_info['skills'])
         
         if requirements_info['skills']:
             years_list = [s['years'] for s in requirements_info['skills'] if s['years'] is not None]
@@ -347,37 +370,51 @@ class FreeCandidateMatchingSystem:
             if level in job_text_lower:
                 required_seniority = max(required_seniority, score / 10.0)
         
-        # Pad to match candidate vector length
-        padding_size = 384 * 4 + 3 - len(job_embedding)
-        padded_vector = np.concatenate([
-            job_embedding,
-            np.zeros(max(0, padding_size - 2)),
-            [required_years, required_seniority]
-        ])
-        
-        return padded_vector
+        return {
+            'job_requirements': job['job_requirements'],
+            'location': job.get('location', 'Unknown'),
+            'required_years': required_years,
+            'required_seniority': required_seniority,
+            'required_skill_count': required_skill_count,
+            'skills': requirements_info['skills']
+        }
     
-    def calculate_matching_score(self, candidate_vector: np.ndarray, job_vector: np.ndarray,
-                                candidate_location: str, job_location: str) -> float:
+    def calculate_matching_score(self, candidate_features: Dict, job_features: Dict) -> float:
         """
         Calculate matching score between candidate and job
         """
-        # Ensure vectors are same length
-        min_length = min(len(candidate_vector), len(job_vector))
-        candidate_vector = candidate_vector[:min_length]
-        job_vector = job_vector[:min_length]
+        # Text similarity (40% weight)
+        text_similarity = self.calculate_text_similarity(
+            candidate_features['profile_text'],
+            job_features['job_requirements']
+        )
         
-        # Calculate cosine similarity for skills/profile match
-        profile_similarity = cosine_similarity([candidate_vector], [job_vector])[0][0]
+        # Skills overlap (30% weight)
+        candidate_skills = set(s['skill'] for s in candidate_features['skills'])
+        job_skills = set(s['skill'] for s in job_features['skills'])
         
-        # Calculate distance penalty (FREE with Nominatim)
-        distance = self.calculate_distance(candidate_location, job_location)
+        if job_skills:
+            skills_overlap = len(candidate_skills.intersection(job_skills)) / len(job_skills)
+        else:
+            skills_overlap = 0.5  # Neutral score if no specific skills mentioned
+        
+        # Experience match (20% weight)
+        experience_diff = abs(candidate_features['avg_years_experience'] - job_features['required_years'])
+        experience_score = max(0, 1 - (experience_diff / 10))  # Normalize to 0-1
+        
+        # Location proximity (10% weight)
+        distance = self.calculate_distance(
+            candidate_features['location'],
+            job_features['location']
+        )
         distance_score = max(0, 1 - (distance / 1000))  # Normalize distance
         
-        # Weighted final score
+        # Calculate weighted final score
         final_score = (
-            profile_similarity * 0.7 +  # 70% weight on profile match
-            distance_score * 0.3        # 30% weight on location proximity
+            text_similarity * 0.4 +
+            skills_overlap * 0.3 +
+            experience_score * 0.2 +
+            distance_score * 0.1
         )
         
         return final_score
@@ -413,40 +450,39 @@ class FreeCandidateMatchingSystem:
                         employers_df: pd.DataFrame, companies_df: pd.DataFrame, 
                         top_k: int = 5) -> Dict:
         """
-        Find top matching candidates for a specific job using FREE tools only
+        Find top matching candidates for a specific job
         """
         # Find the specific job
-        job = employers_df[employers_df['id'] == job_id].iloc[0]
-        job_location = job.get('location', 'Unknown')
+        job_row = employers_df[employers_df['id'] == job_id]
+        if job_row.empty:
+            return {
+                'success': False,
+                'error': f'Job {job_id} not found'
+            }
         
-        # Create job vector
-        job_dict = {
-            'job_requirements': job['job_requirements']
-        }
-        job_vector = self.create_job_vector(job_dict)
+        job = job_row.iloc[0]
+        job_features = self.create_job_features({
+            'job_requirements': job['job_requirements'],
+            'location': job.get('location', 'Unknown')
+        })
         
         # Calculate scores for all candidates
         candidate_scores = []
         
         for _, candidate in candidates_df.iterrows():
-            candidate_dict = {
+            candidate_features = self.create_candidate_features({
                 'profile_details': candidate['profile_details'],
                 'location': candidate['location'],
                 'benefits_requirements': candidate['benefits_requirements'],
                 'corporate_culture': candidate['corporate_culture']
-            }
+            }, companies_df)
             
-            candidate_vector = self.create_candidate_vector(candidate_dict, companies_df)
-            
-            score = self.calculate_matching_score(
-                candidate_vector, job_vector,
-                candidate['location'], job_location
-            )
+            score = self.calculate_matching_score(candidate_features, job_features)
             
             candidate_scores.append({
                 'candidate_id': candidate['id'],
                 'candidate_name': candidate.get('name', f"Candidate {candidate['id']}"),
-                'score': score,
+                'score': round(score, 3),
                 'location': candidate['location'],
                 'profile_details': candidate['profile_details']
             })
@@ -465,9 +501,9 @@ class FreeCandidateMatchingSystem:
             'skills_analysis': skills_analysis
         }
 
-# Example usage with FREE tools only
+# Example usage
 def main():
-    # Initialize the system (NO OpenAI API key needed!)
+    # Initialize the system
     GOOGLE_CREDENTIALS_PATH = "path-to-your-google-credentials.json"
     
     matcher = FreeCandidateMatchingSystem(GOOGLE_CREDENTIALS_PATH)
