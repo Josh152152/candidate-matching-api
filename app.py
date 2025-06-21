@@ -1,232 +1,299 @@
-# ==============================================================================
-# FLASK SERVER FOR AI RECRUITMENT PLATFORM - COMPLETE VERSION
-# ==============================================================================
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import gspread
+from google.oauth2.service_account import Credentials
 import os
-from dotenv import load_dotenv
-from matching_system import FreeCandidateMatchingSystem
+from datetime import datetime
+import uuid
+from matching_system import CandidateMatchingSystem
+from werkzeug.security import generate_password_hash
 
-# Load environment variables
-load_dotenv()  
-print("✅ Environment variables loaded from .env file")
-
-# Create Flask application
 app = Flask(__name__)
-print("✅ Flask application created")
-
-# Enable CORS
 CORS(app)
-print("✅ CORS enabled - Frontend can now connect to our API")
 
-# Initialize AI matching system
-try:
-    matcher = FreeCandidateMatchingSystem(
-        google_credentials_path=os.getenv('GOOGLE_CREDENTIALS_PATH')
-    )
-    print("✅ AI Matching System initialized successfully!")
-    print("💰 No OpenAI costs - Completely FREE!")
-except Exception as e:
-    print(f"❌ Error initializing AI system: {e}")
+# Google Sheets setup
+SCOPES = ['https://www.googleapis.com/spreadsheets/']
+SERVICE_ACCOUNT_FILE = 'google-credentials.json'
 
-# ENDPOINT 1: Health Check
+def get_google_client():
+    try:
+        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        return gspread.authorize(creds)
+    except Exception as e:
+        print(f"Error connecting to Google Sheets: {e}")
+        return None
+
+# Initialize matching system
+matching_system = CandidateMatchingSystem()
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({
-        'status': 'healthy', 
-        'message': 'FREE AI matching system running!',
-        'version': '1.0.0',
-        'cost': 'FREE - No OpenAI charges!'
+        "status": "healthy",
+        "message": "Candidate Matching API is running",
+        "timestamp": datetime.now().isoformat()
     })
 
-# ENDPOINT 2: Find Matching Candidates
+@app.route('/add_candidate', methods=['POST'])
+def add_candidate():
+    try:
+        data = request.json
+        
+        # Validate required fields
+        required_fields = ['full_name', 'email', 'phone', 'location', 'experience_years', 'skills', 'bio']
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+        
+        # Generate unique ID
+        candidate_id = str(uuid.uuid4())[:8]
+        
+        # Hash password if provided
+        password_hash = ""
+        if 'password' in data and data['password']:
+            password_hash = generate_password_hash(data['password'])
+        
+        # Connect to Google Sheets
+        client = get_google_client()
+        if not client:
+            return jsonify({"error": "Failed to connect to database"}), 500
+        
+        # Open candidates sheet
+        candidates_sheet_id = os.getenv('CANDIDATES_SHEET_ID')
+        sheet = client.open_by_key(candidates_sheet_id).sheet1
+        
+        # Prepare candidate data
+        candidate_data = [
+            candidate_id,
+            data['full_name'],
+            data['email'],
+            data['phone'],
+            data['location'],
+            str(data['experience_years']),
+            data['skills'],
+            data['bio'],
+            data.get('education', ''),
+            data.get('certifications', ''),
+            data.get('portfolio_url', ''),
+            data.get('linkedin_url', ''),
+            password_hash,
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'active'
+        ]
+        
+        # Add to sheet
+        sheet.append_row(candidate_data)
+        
+        return jsonify({
+            "success": True,
+            "message": "Candidate registered successfully",
+            "candidate_id": candidate_id
+        }), 201
+        
+    except Exception as e:
+        print(f"Error adding candidate: {e}")
+        return jsonify({"error": "Failed to register candidate"}), 500
+
+@app.route('/add_job', methods=['POST'])
+def add_job():
+    try:
+        data = request.json
+        
+        # Validate required fields
+        required_fields = ['company_name', 'job_title', 'location', 'requirements', 'description']
+        for field in required_fields:
+            if field not in data or not data[field]:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+        
+        # Generate unique job ID
+        job_id = str(uuid.uuid4())[:8]
+        
+        # Connect to Google Sheets
+        client = get_google_client()
+        if not client:
+            return jsonify({"error": "Failed to connect to database"}), 500
+        
+        # Open employers sheet
+        employers_sheet_id = os.getenv('EMPLOYERS_SHEET_ID')
+        sheet = client.open_by_key(employers_sheet_id).sheet1
+        
+        # Prepare job data
+        job_data = [
+            job_id,
+            data['company_name'],
+            data['job_title'],
+            data['location'],
+            data['requirements'],
+            data['description'],
+            data.get('salary_range', ''),
+            data.get('employment_type', 'Full-time'),
+            data.get('contact_email', ''),
+            data.get('company_website', ''),
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'active'
+        ]
+        
+        # Add to sheet
+        sheet.append_row(job_data)
+        
+        return jsonify({
+            "success": True,
+            "message": "Job posted successfully",
+            "job_id": job_id
+        }), 201
+        
+    except Exception as e:
+        print(f"Error adding job: {e}")
+        return jsonify({"error": "Failed to post job"}), 500
+
 @app.route('/find_matches', methods=['POST'])
 def find_matches():
     try:
-        print("🔍 New matching request received!")
         data = request.json
-        job_id = data.get('job_id')
-        top_k = data.get('top_k', 5)
+        job_requirements = data.get('job_requirements', '')
+        location = data.get('location', '')
         
-        if not job_id:
-            return jsonify({'success': False, 'error': 'job_id is required'}), 400
+        if not job_requirements:
+            return jsonify({"error": "Job requirements are required"}), 400
         
-        print(f"   🎯 Finding top {top_k} candidates for job: {job_id}")
-        
-        candidates_df, employers_df, companies_df = matcher.load_data_from_sheets(
-            os.getenv('CANDIDATES_SHEET_ID'),
-            os.getenv('EMPLOYERS_SHEET_ID'),
-            os.getenv('COMPANIES_SHEET_ID')
-        )
-        
-        if candidates_df is None:
-            return jsonify({'success': False, 'error': 'Could not load data from Google Sheets'}), 500
-        
-        results = matcher.find_top_matches(job_id, candidates_df, employers_df, companies_df, top_k)
+        # Get matches using the matching system
+        matches = matching_system.find_matches(job_requirements, location)
         
         return jsonify({
-            'success': True,
-            'data': results,
-            'message': f'Successfully found {len(results["top_matches"])} candidates'
+            "success": True,
+            "matches": matches,
+            "total_matches": len(matches)
         })
         
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        print(f"Error finding matches: {e}")
+        return jsonify({"error": "Failed to find matches"}), 500
 
-# ENDPOINT 3: Get All Jobs
 @app.route('/get_jobs', methods=['GET'])
 def get_jobs():
     try:
-        _, employers_df, _ = matcher.load_data_from_sheets(
-            os.getenv('CANDIDATES_SHEET_ID'),
-            os.getenv('EMPLOYERS_SHEET_ID'),
-            os.getenv('COMPANIES_SHEET_ID')
-        )
+        client = get_google_client()
+        if not client:
+            return jsonify({"error": "Failed to connect to database"}), 500
         
-        if employers_df is None:
-            return jsonify({'success': False, 'error': 'Could not load jobs data'}), 500
+        employers_sheet_id = os.getenv('EMPLOYERS_SHEET_ID')
+        sheet = client.open_by_key(employers_sheet_id).sheet1
         
-        jobs_list = []
-        for _, job in employers_df.iterrows():
-            jobs_list.append({
-                'id': job['id'],
-                'company_name': job.get('company_name', 'Unknown'),
-                'job_requirements': job['job_requirements']
-            })
+        # Get all records
+        records = sheet.get_all_records()
         
         return jsonify({
-            'success': True,
-            'jobs': jobs_list,
-            'count': len(jobs_list),
-            'message': 'Jobs list retrieved successfully'
+            "success": True,
+            "jobs": records,
+            "total_jobs": len(records)
         })
         
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        print(f"Error getting jobs: {e}")
+        return jsonify({"error": "Failed to retrieve jobs"}), 500
 
-# ENDPOINT 4: Test Google Sheets Connection
+@app.route('/get_candidates', methods=['GET'])
+def get_candidates():
+    try:
+        client = get_google_client()
+        if not client:
+            return jsonify({"error": "Failed to connect to database"}), 500
+        
+        candidates_sheet_id = os.getenv('CANDIDATES_SHEET_ID')
+        sheet = client.open_by_key(candidates_sheet_id).sheet1
+        
+        # Get all records (excluding password hashes for security)
+        records = sheet.get_all_records()
+        
+        # Remove sensitive data
+        for record in records:
+            if 'password_hash' in record:
+                del record['password_hash']
+        
+        return jsonify({
+            "success": True,
+            "candidates": records,
+            "total_candidates": len(records)
+        })
+        
+    except Exception as e:
+        print(f"Error getting candidates: {e}")
+        return jsonify({"error": "Failed to retrieve candidates"}), 500
+
+@app.route('/get_candidate/<candidate_id>', methods=['GET'])
+def get_candidate(candidate_id):
+    try:
+        client = get_google_client()
+        if not client:
+            return jsonify({"error": "Failed to connect to database"}), 500
+        
+        candidates_sheet_id = os.getenv('CANDIDATES_SHEET_ID')
+        sheet = client.open_by_key(candidates_sheet_id).sheet1
+        
+        # Find candidate by ID
+        records = sheet.get_all_records()
+        candidate = None
+        
+        for record in records:
+            if record.get('id') == candidate_id:
+                candidate = record
+                break
+        
+        if not candidate:
+            return jsonify({"error": "Candidate not found"}), 404
+        
+        # Remove sensitive data
+        if 'password_hash' in candidate:
+            del candidate['password_hash']
+        
+        return jsonify({
+            "success": True,
+            "candidate": candidate
+        })
+        
+    except Exception as e:
+        print(f"Error getting candidate: {e}")
+        return jsonify({"error": "Failed to retrieve candidate"}), 500
+
 @app.route('/test_sheets', methods=['GET'])
 def test_sheets():
     try:
-        candidates_df, employers_df, companies_df = matcher.load_data_from_sheets(
-            os.getenv('CANDIDATES_SHEET_ID'),
-            os.getenv('EMPLOYERS_SHEET_ID'),
-            os.getenv('COMPANIES_SHEET_ID')
-        )
+        client = get_google_client()
+        if not client:
+            return jsonify({"error": "Failed to connect to Google Sheets"}), 500
+        
+        # Test candidates sheet
+        candidates_sheet_id = os.getenv('CANDIDATES_SHEET_ID')
+        candidates_sheet = client.open_by_key(candidates_sheet_id).sheet1
+        candidates = candidates_sheet.get_all_records()[:5]  # First 5 records
+        
+        # Test employers sheet
+        employers_sheet_id = os.getenv('EMPLOYERS_SHEET_ID')
+        employers_sheet = client.open_by_key(employers_sheet_id).sheet1
+        jobs = employers_sheet.get_all_records()[:5]
+        
+        # Test companies sheet
+        companies_sheet_id = os.getenv('COMPANIES_SHEET_ID')
+        companies_sheet = client.open_by_key(companies_sheet_id).sheet1
+        companies = companies_sheet.get_all_records()[:5]
         
         return jsonify({
-            'success': True,
-            'message': 'Google Sheets connection successful!',
-            'data': {
-                'candidates_count': len(candidates_df) if candidates_df is not None else 0,
-                'employers_count': len(employers_df) if employers_df is not None else 0,
-                'companies_count': len(companies_df) if companies_df is not None else 0
+            "success": True,
+            "message": "Google Sheets connection successful",
+            "data": {
+                "candidates_count": len(candidates),
+                "jobs_count": len(jobs),
+                "companies_count": len(companies),
+                "sample_candidates": candidates,
+                "sample_jobs": jobs,
+                "sample_companies": companies
             }
         })
         
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-# ENDPOINT 5: Add New Candidate (NEW!)
-@app.route('/add_candidate', methods=['POST'])
-def add_candidate():
-    try:
-        print("➕ New candidate registration request received!")
-        candidate_data = request.json
-        
-        # Validate required fields
-        required_fields = ['id', 'name', 'profile_details', 'location', 'benefits_requirements', 'corporate_culture']
-        for field in required_fields:
-            if field not in candidate_data or not candidate_data[field]:
-                return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
-        
-        # Open candidates sheet
-        candidates_sheet = matcher.gc.open_by_key(os.getenv('CANDIDATES_SHEET_ID')).sheet1
-        
-        # Check if candidate already exists
-        existing_records = candidates_sheet.get_all_records()
-        if any(record.get('id') == candidate_data['id'] for record in existing_records):
-            return jsonify({'success': False, 'error': f'Candidate with ID {candidate_data["id"]} already exists'}), 400
-        
-        # Add new candidate
-        new_row = [
-            candidate_data['id'],
-            candidate_data['name'],
-            candidate_data['profile_details'],
-            candidate_data['location'],
-            candidate_data['benefits_requirements'],
-            candidate_data['corporate_culture']
-        ]
-        
-        candidates_sheet.append_row(new_row)
-        print(f"   ✅ Candidate {candidate_data['id']} added successfully!")
-        
-        return jsonify({
-            'success': True,
-            'message': f'Candidate {candidate_data["id"]} added successfully',
-            'candidate_id': candidate_data['id']
-        })
-        
-    except Exception as e:
-        print(f"❌ Error adding candidate: {str(e)}")
-        return jsonify({'success': False, 'error': f'Failed to add candidate: {str(e)}'}), 500
-
-# ENDPOINT 6: Add New Job (NEW!)
-@app.route('/add_job', methods=['POST'])
-def add_job():
-    try:
-        print("➕ New job posting request received!")
-        job_data = request.json
-        
-        # Validate required fields
-        required_fields = ['id', 'company_name', 'job_requirements', 'location']
-        for field in required_fields:
-            if field not in job_data or not job_data[field]:
-                return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
-        
-        # Open employers sheet
-        employers_sheet = matcher.gc.open_by_key(os.getenv('EMPLOYERS_SHEET_ID')).sheet1
-        
-        # Check if job already exists
-        existing_records = employers_sheet.get_all_records()
-        if any(record.get('id') == job_data['id'] for record in existing_records):
-            return jsonify({'success': False, 'error': f'Job with ID {job_data["id"]} already exists'}), 400
-        
-        # Add new job
-        new_row = [
-            job_data['id'],
-            job_data['company_name'],
-            job_data['job_requirements'],
-            job_data['location']
-        ]
-        
-        employers_sheet.append_row(new_row)
-        print(f"   ✅ Job {job_data['id']} added successfully!")
-        
-        return jsonify({
-            'success': True,
-            'message': f'Job {job_data["id"]} added successfully',
-            'job_id': job_data['id']
-        })
-        
-    except Exception as e:
-        print(f"❌ Error adding job: {str(e)}")
-        return jsonify({'success': False, 'error': f'Failed to add job: {str(e)}'}), 500
+        print(f"Error testing sheets: {e}")
+        return jsonify({"error": f"Failed to test sheets: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    print("\n" + "="*60)
-    print("🚀 STARTING AI RECRUITMENT PLATFORM API")
-    print("="*60)
-    print("📋 Available endpoints:")
-    print("   GET  /health              - Check if API is running")
-    print("   POST /find_matches        - Find matching candidates (AI)")
-    print("   GET  /get_jobs            - List all available jobs")  
-    print("   GET  /test_sheets         - Test Google Sheets connection")
-    print("   POST /add_candidate       - Register new candidate (NEW!)")
-    print("   POST /add_job             - Post new job (NEW!)")
-    print("\n🎯 Ready to process candidate matches!")
-    print("💰 100% FREE - No OpenAI costs!")
-    print("="*60 + "\n")
-    
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
