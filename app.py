@@ -1,28 +1,26 @@
 # ==============================================================================
-# FLASK SERVER FOR BUBBLE.IO - 100% FREE
+# FLASK SERVER FOR AI RECRUITMENT PLATFORM - COMPLETE VERSION
 # ==============================================================================
-# This file creates a web API that Bubble.io can use for candidate matching
 
-# STEP 1: Import all the libraries we need
-from flask import Flask, request, jsonify  # For creating the web API
-from flask_cors import CORS                # To allow Bubble.io to connect
-import os                                  # To read environment variables
-from dotenv import load_dotenv            # To load the .env file
-from matching_system import FreeCandidateMatchingSystem  # Our FREE AI system!
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import os
+from dotenv import load_dotenv
+from matching_system import FreeCandidateMatchingSystem
 
-# STEP 2: Load configuration from .env file
+# Load environment variables
 load_dotenv()  
 print("✅ Environment variables loaded from .env file")
 
-# STEP 3: Create the Flask application
+# Create Flask application
 app = Flask(__name__)
 print("✅ Flask application created")
 
-# STEP 4: Enable CORS for Bubble.io
+# Enable CORS
 CORS(app)
-print("✅ CORS enabled - Bubble.io can now connect to our API")
+print("✅ CORS enabled - Frontend can now connect to our API")
 
-# STEP 5: Initialize our AI matching system (100% FREE!)
+# Initialize AI matching system
 try:
     matcher = FreeCandidateMatchingSystem(
         google_credentials_path=os.getenv('GOOGLE_CREDENTIALS_PATH')
@@ -31,20 +29,10 @@ try:
     print("💰 No OpenAI costs - Completely FREE!")
 except Exception as e:
     print(f"❌ Error initializing AI system: {e}")
-    print("   Make sure your .env file and Google credentials are correct")
-
-# ==============================================================================
-# API ENDPOINTS (These are like "menu items" that Bubble.io can order from)
-# ==============================================================================
 
 # ENDPOINT 1: Health Check
 @app.route('/health', methods=['GET'])
 def health_check():
-    """
-    Simple endpoint to check if our API is running
-    Visit: http://your-api-url.com/health
-    You should see: {"status": "healthy", "message": "FREE AI matching system running!"}
-    """
     return jsonify({
         'status': 'healthy', 
         'message': 'FREE AI matching system running!',
@@ -52,108 +40,44 @@ def health_check():
         'cost': 'FREE - No OpenAI charges!'
     })
 
-# ENDPOINT 2: Find Matching Candidates (THE MAIN FEATURE!)
+# ENDPOINT 2: Find Matching Candidates
 @app.route('/find_matches', methods=['POST'])
 def find_matches():
-    """
-    Main endpoint that finds top matching candidates for a job
-    
-    Expected input from Bubble.io:
-    {
-        "job_id": "JOB_001",
-        "top_k": 5
-    }
-    
-    Returns:
-    {
-        "success": true,
-        "data": {
-            "job_id": "JOB_001",
-            "top_matches": [...],
-            "skills_analysis": {...}
-        }
-    }
-    """
     try:
         print("🔍 New matching request received!")
-        
-        # STEP 1: Get the data that Bubble.io sent us
         data = request.json
-        print(f"   Received data: {data}")
+        job_id = data.get('job_id')
+        top_k = data.get('top_k', 5)
         
-        # STEP 2: Extract the specific information we need
-        job_id = data.get('job_id')        # Which job are we matching for?
-        top_k = data.get('top_k', 5)       # How many top candidates? (default = 5)
-        
-        # STEP 3: Validate the input
         if not job_id:
-            print("❌ Error: No job_id provided")
-            return jsonify({
-                'success': False,
-                'error': 'job_id is required'
-            }), 400  # 400 = Bad Request
+            return jsonify({'success': False, 'error': 'job_id is required'}), 400
         
         print(f"   🎯 Finding top {top_k} candidates for job: {job_id}")
         
-        # STEP 4: Load all our data from Google Sheets
-        print("   📊 Loading data from Google Sheets...")
         candidates_df, employers_df, companies_df = matcher.load_data_from_sheets(
-            os.getenv('CANDIDATES_SHEET_ID'),     # Our candidates spreadsheet
-            os.getenv('EMPLOYERS_SHEET_ID'),      # Our jobs spreadsheet  
-            os.getenv('COMPANIES_SHEET_ID')       # Our company rankings spreadsheet
+            os.getenv('CANDIDATES_SHEET_ID'),
+            os.getenv('EMPLOYERS_SHEET_ID'),
+            os.getenv('COMPANIES_SHEET_ID')
         )
         
-        # STEP 5: Check if data loaded successfully
         if candidates_df is None:
-            print("❌ Error: Could not load data from Google Sheets")
-            return jsonify({
-                'success': False,
-                'error': 'Could not load data from Google Sheets. Check your sheet IDs and permissions.'
-            }), 500  # 500 = Internal Server Error
+            return jsonify({'success': False, 'error': 'Could not load data from Google Sheets'}), 500
         
-        print(f"   ✅ Loaded {len(candidates_df)} candidates and {len(employers_df)} jobs")
+        results = matcher.find_top_matches(job_id, candidates_df, employers_df, companies_df, top_k)
         
-        # STEP 6: Run our AI matching algorithm! 🤖
-        print("   🤖 Running FREE AI matching algorithm...")
-        results = matcher.find_top_matches(
-            job_id=job_id,
-            candidates_df=candidates_df, 
-            employers_df=employers_df, 
-            companies_df=companies_df, 
-            top_k=top_k
-        )
-        
-        print(f"   🎉 Found {len(results['top_matches'])} matching candidates!")
-        print("   💰 Total cost: $0 - Completely FREE!")
-        
-        # STEP 7: Send the results back to Bubble.io
         return jsonify({
             'success': True,
             'data': results,
-            'message': f'Successfully found {len(results["top_matches"])} candidates',
-            'cost_info': '100% free processing - No OpenAI charges'
+            'message': f'Successfully found {len(results["top_matches"])} candidates'
         })
         
     except Exception as e:
-        # If anything goes wrong, send a helpful error message
-        print(f"❌ Error in find_matches: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': f'An error occurred: {str(e)}',
-            'help': 'Check your Google Sheets IDs and credentials'
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-# ENDPOINT 3: Get All Jobs (Helper endpoint)
+# ENDPOINT 3: Get All Jobs
 @app.route('/get_jobs', methods=['GET'])
 def get_jobs():
-    """
-    Returns a list of all available jobs
-    Useful for Bubble.io to show a dropdown of job options
-    """
     try:
-        print("📋 Getting list of all jobs...")
-        
-        # Load employers data
         _, employers_df, _ = matcher.load_data_from_sheets(
             os.getenv('CANDIDATES_SHEET_ID'),
             os.getenv('EMPLOYERS_SHEET_ID'),
@@ -161,18 +85,14 @@ def get_jobs():
         )
         
         if employers_df is None:
-            return jsonify({
-                'success': False,
-                'error': 'Could not load jobs data'
-            }), 500
+            return jsonify({'success': False, 'error': 'Could not load jobs data'}), 500
         
-        # Convert to a simple list for Bubble.io
         jobs_list = []
         for _, job in employers_df.iterrows():
             jobs_list.append({
                 'id': job['id'],
                 'company_name': job.get('company_name', 'Unknown'),
-                'job_requirements': job['job_requirements'][:100] + '...'  # Truncate for display
+                'job_requirements': job['job_requirements']
             })
         
         return jsonify({
@@ -183,23 +103,12 @@ def get_jobs():
         })
         
     except Exception as e:
-        print(f"❌ Error in get_jobs: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # ENDPOINT 4: Test Google Sheets Connection
 @app.route('/test_sheets', methods=['GET'])
 def test_sheets():
-    """
-    Test endpoint to verify Google Sheets connection
-    Visit this URL to check if your sheets are accessible
-    """
     try:
-        print("🧪 Testing Google Sheets connection...")
-        
-        # Try to load just the first few rows
         candidates_df, employers_df, companies_df = matcher.load_data_from_sheets(
             os.getenv('CANDIDATES_SHEET_ID'),
             os.getenv('EMPLOYERS_SHEET_ID'),
@@ -217,46 +126,74 @@ def test_sheets():
         })
         
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': f'Google Sheets connection failed: {str(e)}',
-            'help': 'Check your credentials and sheet IDs in the .env file'
-        }), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
-# ENDPOINT 5: Add New Job (Bonus feature)
+# ENDPOINT 5: Add New Candidate (NEW!)
+@app.route('/add_candidate', methods=['POST'])
+def add_candidate():
+    try:
+        print("➕ New candidate registration request received!")
+        candidate_data = request.json
+        
+        # Validate required fields
+        required_fields = ['id', 'name', 'profile_details', 'location', 'benefits_requirements', 'corporate_culture']
+        for field in required_fields:
+            if field not in candidate_data or not candidate_data[field]:
+                return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
+        
+        # Open candidates sheet
+        candidates_sheet = matcher.gc.open_by_key(os.getenv('CANDIDATES_SHEET_ID')).sheet1
+        
+        # Check if candidate already exists
+        existing_records = candidates_sheet.get_all_records()
+        if any(record.get('id') == candidate_data['id'] for record in existing_records):
+            return jsonify({'success': False, 'error': f'Candidate with ID {candidate_data["id"]} already exists'}), 400
+        
+        # Add new candidate
+        new_row = [
+            candidate_data['id'],
+            candidate_data['name'],
+            candidate_data['profile_details'],
+            candidate_data['location'],
+            candidate_data['benefits_requirements'],
+            candidate_data['corporate_culture']
+        ]
+        
+        candidates_sheet.append_row(new_row)
+        print(f"   ✅ Candidate {candidate_data['id']} added successfully!")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Candidate {candidate_data["id"]} added successfully',
+            'candidate_id': candidate_data['id']
+        })
+        
+    except Exception as e:
+        print(f"❌ Error adding candidate: {str(e)}")
+        return jsonify({'success': False, 'error': f'Failed to add candidate: {str(e)}'}), 500
+
+# ENDPOINT 6: Add New Job (NEW!)
 @app.route('/add_job', methods=['POST'])
 def add_job():
-    """
-    Add a new job to the employers sheet
-    
-    Expected input from Bubble.io:
-    {
-        "id": "JOB_003",
-        "company_name": "TechCorp",
-        "job_requirements": "Looking for Python developer with 5+ years experience",
-        "location": "New York, NY"
-    }
-    """
     try:
-        print("➕ New job addition request received!")
-        
-        # Get the job data from Bubble.io
+        print("➕ New job posting request received!")
         job_data = request.json
-        print(f"   Job data received: {job_data}")
         
         # Validate required fields
         required_fields = ['id', 'company_name', 'job_requirements', 'location']
         for field in required_fields:
             if field not in job_data or not job_data[field]:
-                return jsonify({
-                    'success': False,
-                    'error': f'Missing required field: {field}'
-                }), 400
+                return jsonify({'success': False, 'error': f'Missing required field: {field}'}), 400
         
-        # Open the employers sheet and add the new job
+        # Open employers sheet
         employers_sheet = matcher.gc.open_by_key(os.getenv('EMPLOYERS_SHEET_ID')).sheet1
         
-        # Prepare the row data
+        # Check if job already exists
+        existing_records = employers_sheet.get_all_records()
+        if any(record.get('id') == job_data['id'] for record in existing_records):
+            return jsonify({'success': False, 'error': f'Job with ID {job_data["id"]} already exists'}), 400
+        
+        # Add new job
         new_row = [
             job_data['id'],
             job_data['company_name'],
@@ -264,9 +201,7 @@ def add_job():
             job_data['location']
         ]
         
-        # Add the new row to the sheet
         employers_sheet.append_row(new_row)
-        
         print(f"   ✅ Job {job_data['id']} added successfully!")
         
         return jsonify({
@@ -277,108 +212,21 @@ def add_job():
         
     except Exception as e:
         print(f"❌ Error adding job: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': f'Failed to add job: {str(e)}'
-        }), 500
-
-# ENDPOINT 6: Get Candidate Details
-@app.route('/get_candidate/<candidate_id>', methods=['GET'])
-def get_candidate_details(candidate_id):
-    """
-    Get detailed information about a specific candidate
-    URL: http://your-api-url.com/get_candidate/CAND_001
-    """
-    try:
-        print(f"👤 Getting details for candidate: {candidate_id}")
-        
-        # Load candidates data
-        candidates_df, _, _ = matcher.load_data_from_sheets(
-            os.getenv('CANDIDATES_SHEET_ID'),
-            os.getenv('EMPLOYERS_SHEET_ID'),
-            os.getenv('COMPANIES_SHEET_ID')
-        )
-        
-        if candidates_df is None:
-            return jsonify({
-                'success': False,
-                'error': 'Could not load candidates data'
-            }), 500
-        
-        # Find the specific candidate
-        candidate_row = candidates_df[candidates_df['id'] == candidate_id]
-        
-        if candidate_row.empty:
-            return jsonify({
-                'success': False,
-                'error': f'Candidate {candidate_id} not found'
-            }), 404
-        
-        candidate = candidate_row.iloc[0]
-        
-        # Extract skills for this candidate
-        candidate_dict = {
-            'profile_details': candidate['profile_details'],
-            'location': candidate['location'],
-            'benefits_requirements': candidate['benefits_requirements'],
-            'corporate_culture': candidate['corporate_culture']
-        }
-        
-        skills_info = matcher.extract_skills_with_spacy(candidate['profile_details'])
-        
-        return jsonify({
-            'success': True,
-            'candidate': {
-                'id': candidate['id'],
-                'name': candidate.get('name', f'Candidate {candidate["id"]}'),
-                'profile_details': candidate['profile_details'],
-                'location': candidate['location'],
-                'benefits_requirements': candidate['benefits_requirements'],
-                'corporate_culture': candidate['corporate_culture'],
-                'extracted_skills': skills_info['skills']
-            }
-        })
-        
-    except Exception as e:
-        print(f"❌ Error getting candidate details: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-# ==============================================================================
-# MAIN APPLICATION RUNNER
-# ==============================================================================
+        return jsonify({'success': False, 'error': f'Failed to add job: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    """
-    This is where our application starts running
-    Think of this as "opening the restaurant" - we start serving customers
-    """
     print("\n" + "="*60)
-    print("🚀 STARTING FREE AI CANDIDATE MATCHING API")
+    print("🚀 STARTING AI RECRUITMENT PLATFORM API")
     print("="*60)
-    
-    # Print helpful information
     print("📋 Available endpoints:")
-    print("   GET  /health           - Check if API is running")
-    print("   POST /find_matches     - Find matching candidates")
-    print("   GET  /get_jobs         - List all available jobs")  
-    print("   GET  /test_sheets      - Test Google Sheets connection")
-    print("   POST /add_job          - Add a new job")
-    print("   GET  /get_candidate/<id> - Get candidate details")
-    print("\n💡 For testing, visit: http://localhost:5000/health")
-    print("🔗 For Bubble.io, use: http://your-deployed-url.com/find_matches")
+    print("   GET  /health              - Check if API is running")
+    print("   POST /find_matches        - Find matching candidates (AI)")
+    print("   GET  /get_jobs            - List all available jobs")  
+    print("   GET  /test_sheets         - Test Google Sheets connection")
+    print("   POST /add_candidate       - Register new candidate (NEW!)")
+    print("   POST /add_job             - Post new job (NEW!)")
     print("\n🎯 Ready to process candidate matches!")
     print("💰 100% FREE - No OpenAI costs!")
     print("="*60 + "\n")
     
-    # Start the Flask application
-    # debug=True means we get helpful error messages
-    # host='0.0.0.0' means accessible from other computers
-    # port=5000 means it runs on port 5000
-    app.run(
-        debug=True,           # Show detailed errors (turn off in production)
-        host='0.0.0.0',       # Allow external connections
-        port=5000             # Run on port 5000
-    )
+    app.run(debug=True, host='0.0.0.0', port=5000)
