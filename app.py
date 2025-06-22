@@ -10,6 +10,22 @@ from datetime import datetime
 from matching_system import MatchingSystem
 from candidate_registration import CandidateRegistrationSystem
 
+# Ensure spaCy model is installed before importing it
+import subprocess
+import importlib.util
+
+def ensure_spacy_model():
+    try:
+        import en_core_web_sm  # just checks if installed
+    except ImportError:
+        subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
+
+ensure_spacy_model()
+
+# Now import and load spaCy
+import spacy
+nlp = spacy.load("en_core_web_sm")
+
 # Load environment variables
 load_dotenv()
 
