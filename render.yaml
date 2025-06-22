@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: candidate-matching-api
+    env: python
+    runtime: python-3.11.0
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: GOOGLE_CREDENTIALS_PATH
+        value: ./google-credentials.json
+      - key: CANDIDATES_SHEET_ID
+        value: 1FVyc3X_XRCgK-2Ki9gXo0IdwuOrttnG-6063WEo96MY
+      - key: EMPLOYERS_SHEET_ID
+        value: 12_4qpVAplpEjMrNuqnO_M-gliLneKH2lWRlRXNm4fGA
+      - key: COMPANIES_SHEET_ID
+        value: 1Q6M81YLYW2Z6bJY12CUt0XKn3wp9iNTUz2qN71YGlNE
