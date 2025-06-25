@@ -2,28 +2,27 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# ✅ Install build tools required by numpy, cmake, etc.
+# Install system-level build tools (for packages that may need compilation)
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     make \
     cmake \
+    python3-dev \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Copy only requirements file first to leverage Docker cache
 COPY requirements.txt .
 
-# 🔧 Rebuild numpy from source to fix ABI mismatch
-RUN pip install --no-binary :all: numpy
+# ✅ Upgrade pip, use prebuilt wheels
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-# Install all other Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of the application
+# Copy the rest of the code
 COPY . .
 
-# Expose port expected by Render
+# Expose the expected port
 EXPOSE 10000
 
-# Launch app via gunicorn
+# ✅ Run Flask app with gunicorn (Render uses $PORT)
 CMD exec gunicorn app:app --bind 0.0.0.0:$PORT --workers 1
