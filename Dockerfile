@@ -2,27 +2,27 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system-level build tools (for packages that may need compilation)
+# Install required system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     make \
-    cmake \
-    python3-dev \
     build-essential \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only requirements file first to leverage Docker cache
+# Upgrade pip and clean cache
+RUN pip install --upgrade pip
+
+# Copy and install requirements
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# ✅ Upgrade pip, use prebuilt wheels
-RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
-
-# Copy the rest of the code
+# Copy the application code
 COPY . .
 
-# Expose the expected port
+# Expose the port your app runs on
 EXPOSE 10000
 
-# ✅ Run Flask app with gunicorn (Render uses $PORT)
-CMD exec gunicorn app:app --bind 0.0.0.0:$PORT --workers 1
+# Use Gunicorn to run Flask
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:$PORT", "--workers", "1"]
