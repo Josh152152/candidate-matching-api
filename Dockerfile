@@ -11,7 +11,10 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# 🔧 Fix NumPy binary incompatibility by building it from source
+RUN pip install --no-binary :all: numpy
+
+# Now install the rest of the Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
@@ -20,5 +23,5 @@ COPY . .
 # Expose port
 EXPOSE 10000
 
-# Run the application
-CMD exec gunicorn app:app --bind 0.0.0.0:$PORT --workers 1
+# Start the app
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:10000"]
