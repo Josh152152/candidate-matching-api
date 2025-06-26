@@ -1,8 +1,9 @@
 FROM python:3.11-slim
 
+# Set working directory
 WORKDIR /app
 
-# Install required system dependencies
+# Install system dependencies required for building Python packages
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -11,21 +12,24 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip and clean cache
+# Upgrade pip
 RUN pip install --upgrade pip
 
-# Copy requirements and install dependencies
+# Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy the rest of the application
 COPY . .
 
-# Make start.sh executable
+# Reinstall numpy to fix dtype binary incompatibility with thinc/spaCy
+RUN pip install --force-reinstall numpy
+
+# Make start script executable
 RUN chmod +x start.sh
 
-# Expose app port
+# Expose the port (Render will set $PORT)
 EXPOSE 10000
 
-# Run the app via shell script
+# Start the app using your custom start script
 CMD ["./start.sh"]
