@@ -14,15 +14,18 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip and clean cache
 RUN pip install --upgrade pip
 
-# Copy and install requirements
+# Copy requirements and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application code
+# Copy application code
 COPY . .
 
-# Expose the port your app runs on
+# Make start.sh executable
+RUN chmod +x start.sh
+
+# Expose app port
 EXPOSE 10000
 
-# Use Gunicorn to run Flask
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:$PORT", "--workers", "1"]
+# Run the app via shell script
+CMD ["./start.sh"]
