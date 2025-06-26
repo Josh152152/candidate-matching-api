@@ -1,9 +1,8 @@
 FROM python:3.11-slim
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies required for building Python packages
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -15,21 +14,19 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN pip install --upgrade pip
 
-# Copy requirements and install Python dependencies
+# Copy and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
+# Copy application code
 COPY . .
 
-# Reinstall numpy to fix dtype binary incompatibility with thinc/spaCy
-RUN pip install --force-reinstall numpy
+# Optional: If you need a shell script to run before startup, ensure it's present and executable
+# COPY start.sh .
+# RUN chmod +x start.sh
 
-# Make start script executable
-RUN chmod +x start.sh
-
-# Expose the port (Render will set $PORT)
+# Expose the app port (Render sets PORT automatically)
 EXPOSE 10000
 
-# Start the app using your custom start script
-CMD ["./start.sh"]
+# Start with Gunicorn using Flask (adjust app:app if different)
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:$PORT", "--workers", "1"]
