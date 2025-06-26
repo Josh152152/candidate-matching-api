@@ -14,19 +14,19 @@ RUN apt-get update && apt-get install -y \
 # Upgrade pip
 RUN pip install --upgrade pip
 
-# Copy and install Python dependencies
+# Install compatible versions to avoid numpy/thinc binary mismatch
+RUN pip install numpy==1.24.4
+RUN pip install --no-cache-dir cython
+
+# Copy and install all other dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy app files
 COPY . .
 
-# Optional: If you need a shell script to run before startup, ensure it's present and executable
-# COPY start.sh .
-# RUN chmod +x start.sh
-
-# Expose the app port (Render sets PORT automatically)
+# Expose port
 EXPOSE 10000
 
-# Start with Gunicorn using Flask (adjust app:app if different)
+# Start with Gunicorn (PORT will be injected by Render)
 CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:$PORT", "--workers", "1"]
