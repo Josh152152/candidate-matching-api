@@ -1,35 +1,33 @@
-# Use official slim Python base
+# Use official lightweight Python image
 FROM python:3.11-slim
 
-# Set work directory inside container
+# Set working directory
 WORKDIR /app
 
-# Install system-level build tools
+# Install system dependencies for building packages
 RUN apt-get update && apt-get install -y \
-    build-essential \
     gcc \
     g++ \
-    make \
+    build-essential \
     python3-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip and setuptools for better build support
-RUN pip install --upgrade pip setuptools wheel
+# Upgrade pip
+RUN pip install --upgrade pip
 
-# Copy dependencies first for cache efficiency
+# Copy and install dependencies
 COPY requirements.txt .
-
-# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your application code
-COPY . .
-
-# Ensure spaCy model is downloaded at build time
+# Download spaCy model during build to avoid runtime errors
 RUN python -m spacy download en_core_web_sm
 
-# Expose the port expected by Render
+# Copy the rest of the code
+COPY . .
+
+# Expose the port Render will assign dynamically
 EXPOSE 10000
 
-# Start the app with Gunicorn and bind to dynamic $PORT
-CMD exec gunicorn app:app --bind 0.0.0.0:$PORT --workers 1
+# Start the app using Gunicorn
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:$PORT", "--workers", "1"]
